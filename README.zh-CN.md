@@ -57,6 +57,38 @@ Instance CR 创建
                    3. 删除 K8s Service
 ```
 
+### 部署流程与角色分工
+
+```
+你（本地机器）          helm install          Kubernetes 集群
+                         一条命令完成
+    │                        │                      │
+    │  docker build/push     │                      │
+    │  (镜像已推送到 SWR)     │                      │
+    │                        │                      │
+    │  kubectl create secret │                      │
+    │  (创建华为云凭证)       │                      │
+    │                        │                      │
+    │  helm install ──────────┼──→ 创建 Deployment ──→ K8s 自动拉镜像、启动容器
+    │                        │    创建 Provider CR──→ OpenEverest 注册 Provider
+    │                        │    创建 RBAC ────────→ 容器获得 K8s 权限
+    │                        │                      │
+    │  kubectl get pods ─────┼──────────────────────→ 查看容器是否 Running
+    │  (验证部署)             │                      │
+    │                        │                      │
+    │  kubectl apply ────────┼──────────────────────→ 容器检测到 Instance CR
+    │  (创建 Instance CR)     │                      │  → 调华为云 API 创建 ELB
+    │                        │                      │  → 创建 K8s Service
+```
+
+| 角色 | 做什么 | 何时运行 |
+|---|---|---|
+| **本地机器** | `helm install` / `kubectl apply` / `kubectl get` | 部署和操作时 |
+| **Provider 容器** | 监听 Instance CR → 调华为云 API → 创建/删除 ELB 和 Service | 7×24 持续运行 |
+| **华为云 ELB** | 接收 API 调用，创建/删除 ELB 实例 | 被 Provider 调用时 |
+
+> `helm install` 是唯一的“启动”步骤。之后容器在集群里持续运行，你只需用 `kubectl apply` 创建 Instance CR 来触发它工作。
+
 ## 前置条件
 
 - **Go 1.26+**
