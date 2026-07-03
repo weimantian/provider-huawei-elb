@@ -1,5 +1,7 @@
 # provider-huawei-elb
 
+[English](README.md) | [中文](README.zh-CN.md)
+
 An [OpenEverest](https://github.com/openeverest) v2 provider that integrates **Huawei Cloud ELB** (Elastic Load Balance) to give database instances load-balanced access from inside or outside the VPC.
 
 ## What It Does

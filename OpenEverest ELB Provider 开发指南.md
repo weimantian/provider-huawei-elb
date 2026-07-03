@@ -376,12 +376,14 @@ func (p *Provider) Status(c *controller.Context) (controller.Status, error) {
     // 就绪时使用 controller.ReadyWithConnectionDetails()
     // 创建中使用 controller.Provisioning("message")
     // 失败使用 controller.Failed("message")
+    // 重要：ELB 处于 ERROR 状态时也必须返回 controller.Failed()，否则会卡在 Provisioning
 }
 
 func (p *Provider) Cleanup(c *controller.Context) error {
-    // 1. 从 Service 注解获取 ELB ID
+    // 1. 从 Service 注解获取 ELB ID（若无，按名称查找已有 ELB）
     // 2. 调用华为云 API 删除 ELB
     // 3. 删除 K8s Service
+    // 重要：所有步骤的错误都应显式返回，不要静默吞错
 }
 ```
 
@@ -404,9 +406,10 @@ func NewELBClient(creds *Credentials) (*elb.ElbClient, error) {
         Build()
 
     // region 必须通过 ELB region 包解析，不能直接传字符串
-    reg := elbregion.ValueOf(creds.Region)
-    if reg == nil {
-        return nil, fmt.Errorf("unknown region: %s", creds.Region)
+    // 注意：使用 SafeValueOf（返回 error）而非已弃用的 ValueOf（返回 nil 表示失败）
+    reg, err := elbregion.SafeValueOf(creds.Region)
+    if err != nil {
+        return nil, fmt.Errorf("invalid region %q: %w", creds.Region, err)
     }
 
     // SafeBuild() 返回 (*HcHttpClient, error)
@@ -426,7 +429,7 @@ func NewELBClient(creds *Credentials) (*elb.ElbClient, error) {
 > **与早期文档的差异**：
 > - 包名是 `v3` 不是 `elb`，需要导入别名 `elb "...services/elb/v3"`
 > - 客户端构造链：`ElbClientBuilder()`（不是 `NewClientBuilder()`）
-> - `WithRegion()` 接收 `*region.Region`（不是字符串），需通过 `elbregion.ValueOf()` 解析
+> - `WithRegion()` 接收 `*region.Region`（不是字符串），需通过 `elbregion.SafeValueOf()` 解析（`ValueOf()` 已弃用，返回 nil 表示失败）
 > - `Build()` / `SafeBuild()` 返回 `*HcHttpClient`，需要再用 `elb.NewElbClient(hcClient)` 包装
 
 **凭证管理**：AK/SK/Region/ProjectID 通过环境变量注入（`HUAWEI_CLOUD_AK`、`HUAWEI_CLOUD_SK`、`HUAWEI_CLOUD_REGION`、`HUAWEI_CLOUD_PROJECT_ID`），在 Helm `values.yaml` 的 `extraEnv` 中配置。
@@ -449,7 +452,7 @@ func EnsureService(c *controller.Context, cfg *ELBConfig, elbID string) error {
             Type: corev1.ServiceTypeLoadBalancer,
             Ports: []corev1.ServicePort{
                 {
-                    Protocol:   corev1.ProtocolTCP,
+                    Protocol:   toK8sProtocol(cfg.Protocol),
                     Port:       cfg.Port,
                     TargetPort: intstr.FromInt(int(cfg.BackendPort)),
                 },
@@ -467,6 +470,7 @@ func EnsureService(c *controller.Context, cfg *ELBConfig, elbID string) error {
 > - 使用 `c.Apply(svc)` 而非 `k8sClient.Create(ctx, svc)`——`Apply` 自动处理 create-or-update 和 owner reference
 > - Namespace 使用 `c.Namespace()`（Instance 所在命名空间），不是硬编码 `"everest-system"`
 > - CCE 通过 `kubernetes.io/elb.id` 注解自动管理 listener/pool，Provider 无需手动创建 listener
+> - **协议映射**：`toK8sProtocol()` 将配置协议（TCP/UDP/HTTP/HTTPS）映射到 K8s `corev1.Protocol`。TCP→TCP、UDP→UDP、SCTP→SCTP 直接映射；HTTP/HTTPS 回退为 TCP（L7 由 ELB 层处理）。不要硬编码 `corev1.ProtocolTCP`。
 
 ### 5.4 声明 RBAC 权限
 
@@ -556,6 +560,8 @@ extraEnv:
   - name: HUAWEI_CLOUD_PROJECT_ID
     value: "your-project-id"
 ```
+
+> **探针路径**：`values.yaml` 中的 liveness/readiness 探针路径必须是 `/healthz` 和 `/readyz`（Provider SDK 内置的 HTTP 端点），**不是** `/schema`。`/schema` 仅用于调试查询，不报告健康状态。
 
 Providers 通过标准的 Helm 工作流进行安装和管理。
 

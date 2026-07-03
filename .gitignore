@@ -35,3 +35,7 @@ charts/provider-huawei-elb/Chart.lock
 # Tool-generated directories (not source code)
 .codegraph
 .omo/
+
+# OpenCode tooling artifacts
+.arts/
+.merkle-snapshot.json
