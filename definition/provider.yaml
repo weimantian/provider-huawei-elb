@@ -1,0 +1,10 @@
+# Provider identity and component definitions.
+# Edit this file to add or remove components.
+# Run `make generate` after making changes.
+
+components:
+    elbEngine:
+        type: elb-engine
+    elbListener:
+        type: elb-listener
+name: provider-huawei-elb

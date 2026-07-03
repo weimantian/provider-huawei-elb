@@ -1,0 +1,15 @@
+# Component type version catalog.
+# Add new versions here when operator releases are available.
+# Mark exactly one version per type as `default: true`.
+
+componentTypes:
+    elb-engine:
+        versions:
+            - default: true
+              image: example/elb-engine:1.0.0
+              version: 1.0.0
+    elb-listener:
+        versions:
+            - default: true
+              image: example/elb-listener:1.0.0
+              version: 1.0.0

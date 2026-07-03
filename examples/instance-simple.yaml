@@ -1,0 +1,21 @@
+# Minimal Instance CR — creates a public ELB with default listener settings.
+# Replace the VPC/subnet/AZ values with your actual Huawei Cloud resources.
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: my-elb-simple
+spec:
+  provider: provider-huawei-elb
+  topology:
+    type: public-elb
+    config:
+      bandwidthSize: 10
+      bandwidthChargeMode: traffic
+  components:
+    elbEngine:
+      type: elb-engine
+      customSpec:
+        vpcId: vpc-xxxxxxxx
+        vipSubnetCidrId: subnet-xxxxxxxx
+        availabilityZoneList:
+          - cn-north-4a

@@ -1,0 +1,24 @@
+# Example Instance CR — creates an internal ELB (no public IP).
+# The ELB is only accessible from within the VPC.
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: my-internal-elb
+spec:
+  provider: provider-huawei-elb
+  topology:
+    type: internal-elb
+  components:
+    elbEngine:
+      type: elb-engine
+      customSpec:
+        vpcId: vpc-xxxxxxxx
+        vipSubnetCidrId: subnet-xxxxxxxx
+        availabilityZoneList:
+          - cn-north-4a
+    elbListener:
+      type: elb-listener
+      customSpec:
+        protocol: TCP
+        port: 3306
+        backendPort: 3306

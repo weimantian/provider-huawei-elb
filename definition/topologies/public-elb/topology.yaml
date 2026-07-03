@@ -1,0 +1,96 @@
+# PublicElb topology definition.
+# Creates a public-facing ELB with an EIP for external access.
+#
+# config.components: Which components are used and their defaults.
+# config.configSchema: Reference a Go type for custom topology config fields.
+# ui: Rendering hints for the frontend form.
+
+config:
+  configSchema: PublicElbTopologyConfig
+  components:
+    elbEngine:
+      defaults:
+        replicas: 1
+    elbListener:
+      optional: true
+
+ui:
+  sections:
+    basicInfo:
+      label: Basic Information
+      description: Configure the ELB for public network access.
+      components:
+        version:
+          uiType: select
+          path: spec.components.elbEngine.version
+          fieldParams:
+            label: ELB Version
+    network:
+      label: Network
+      description: Network configuration for the ELB.
+      components:
+        vpcId:
+          path: spec.components.elbEngine.customSpec.vpcId
+          uiType: text
+          fieldParams:
+            label: VPC ID
+            required: true
+        vipSubnetCidrId:
+          path: spec.components.elbEngine.customSpec.vipSubnetCidrId
+          uiType: text
+          fieldParams:
+            label: Subnet ID
+            required: true
+        availabilityZoneList:
+          path: spec.components.elbEngine.customSpec.availabilityZoneList
+          uiType: text
+          fieldParams:
+            label: Availability Zones
+            required: true
+    listener:
+      label: Listener
+      description: Listener configuration for the ELB.
+      components:
+        protocol:
+          path: spec.components.elbListener.customSpec.protocol
+          uiType: select
+          fieldParams:
+            label: Protocol
+        port:
+          path: spec.components.elbListener.customSpec.port
+          uiType: number
+          fieldParams:
+            label: Port
+          validation:
+            min: 1
+            max: 65535
+        backendPort:
+          path: spec.components.elbListener.customSpec.backendPort
+          uiType: number
+          fieldParams:
+            label: Backend Port
+          validation:
+            min: 1
+            max: 65535
+    bandwidth:
+      label: Bandwidth
+      description: Bandwidth configuration for the public IP.
+      components:
+        bandwidthSize:
+          path: spec.topology.config.bandwidthSize
+          uiType: number
+          fieldParams:
+            label: Bandwidth Size (Mbit/s)
+          validation:
+            min: 1
+            max: 2000
+        bandwidthChargeMode:
+          path: spec.topology.config.bandwidthChargeMode
+          uiType: select
+          fieldParams:
+            label: Charge Mode
+  sectionsOrder:
+    - basicInfo
+    - network
+    - listener
+    - bandwidth

@@ -1,0 +1,39 @@
+# Example Instance CR for the provider-huawei-elb provider.
+# Creates a public ELB with a TCP listener on port 3306.
+#
+# Prerequisites:
+#   1. OpenEverest CRDs installed
+#   2. Provider CR applied (see charts/provider-huawei-elb/templates/provider.yaml)
+#   3. Provider running with Huawei Cloud credentials configured
+#      (HUAWEI_CLOUD_AK, HUAWEI_CLOUD_SK, HUAWEI_CLOUD_REGION,
+#       HUAWEI_CLOUD_PROJECT_ID env vars)
+#
+# Replace all placeholder values (vpc-xxxxxxxx, subnet-xxxxxxxx, etc.)
+# with your actual Huawei Cloud resource IDs.
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: example-elb
+spec:
+  provider: provider-huawei-elb
+  topology:
+    type: public-elb
+    config:
+      bandwidthSize: 20
+      bandwidthChargeMode: traffic
+      publicIpNetworkType: 5_bgp
+  components:
+    elbEngine:
+      type: elb-engine
+      customSpec:
+        vpcId: vpc-xxxxxxxx
+        vipSubnetCidrId: subnet-xxxxxxxx
+        availabilityZoneList:
+          - cn-north-4a
+          - cn-north-4b
+    elbListener:
+      type: elb-listener
+      customSpec:
+        protocol: TCP
+        port: 3306
+        backendPort: 3306
