@@ -1,0 +1,20 @@
+# Local build Dockerfile — uses pre-compiled binary and local base image
+# Use this when network is unavailable for pulling golang:1.26 / distroless.
+# Build the binary first:
+#   CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -a -o bin/provider cmd/provider/main.go
+# Then build the image:
+#   docker build -f Dockerfile.local -t provider-huawei-elb:latest .
+
+FROM redis:7-alpine
+
+WORKDIR /
+
+# Copy pre-built static binary
+COPY bin/provider /provider
+
+# Create non-root user (65532:65532, matching distroless nonroot convention)
+RUN addgroup -g 65532 -S nonroot && adduser -u 65532 -S -G nonroot nonroot
+
+USER 65532:65532
+
+ENTRYPOINT ["/provider"]
