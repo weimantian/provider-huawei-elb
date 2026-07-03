@@ -140,16 +140,138 @@ Open `http://127.0.0.1:8080` in your browser. Log in with `admin` and the passwo
 
 ### 4.1 Image Preparation
 
-The image has been built and pushed to Huawei Cloud SWR:
+Deploying the Provider requires a container image. There are two ways to obtain it — **choose either one**.
+
+#### Option 1: Use the Pre-Built Multi-Arch Image (Recommended, pull directly)
+
+The image has been built and pushed to Huawei Cloud SWR. **It supports both amd64 (x86) and arm64 (Kunpeng) architectures**. Pull it directly:
 
 ```bash
-# Verify the image is available
 docker pull swr.cn-north-4.myhuaweicloud.com/weimantian/provider-huawei-elb:latest
 ```
 
-> To build from source, run in the **repository root**:
-> - With network: `docker build -t provider-huawei-elb:latest .` (uses `Dockerfile`)
-> - Without network: use `Dockerfile.local` (cross-compile first, then package)
+After pulling successfully, skip to [§4.2](#42-create-huawei-cloud-credentials-secret) to continue deployment.
+
+#### Option 2: Build the Image Locally
+
+If you need to modify code and rebuild, or cannot access SWR, you can build in the **repository root**.
+
+##### Method A: Standard Build (requires network, Docker auto-pulls golang base image)
+
+```bash
+# Run in the repository root, uses the standard Dockerfile
+docker build -t provider-huawei-elb:latest .
+```
+
+> This uses `Dockerfile`. Docker pulls `golang:1.26` to compile Go source, then packages the runtime with `distroless`. Requires Docker Hub access.
+>
+> **Note**: This builds a single-architecture image for the current machine's architecture only.
+
+##### Method B: Local Cross-Compile Build (no network needed, uses local base image)
+
+If the machine cannot reach Docker Hub (cannot pull `golang:1.26`), cross-compile the binary first, then package with a locally available base image:
+
+```bash
+# 1. Check cluster architecture (arm64 or amd64)
+kubectl get nodes -o jsonpath='{.items[0].status.nodeInfo.architecture}'
+
+# 2. Cross-compile the Go binary (choose GOARCH based on cluster architecture)
+#    For arm64 clusters (e.g. Huawei Cloud Kunpeng CCE):
+CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -a -o bin/provider cmd/provider/main.go
+
+#    For amd64 clusters (e.g. Huawei Cloud x86 CCE):
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -o bin/provider cmd/provider/main.go
+
+# 3. Package with Dockerfile.local (disable BuildKit to avoid SWR-incompatible manifest list)
+DOCKER_BUILDKIT=0 docker build -f Dockerfile.local -t provider-huawei-elb:latest .
+```
+
+> This uses `Dockerfile.local` with the local `redis:7-alpine` image as base (includes CA certs for HTTPS to Huawei Cloud API). The binary is statically compiled with no CGO dependencies.
+>
+> **Note**: This builds a single-architecture image for the specified architecture only.
+
+##### Method C: Multi-Arch Build (supports both amd64 + arm64)
+
+To support both x86 and Kunpeng clusters with a single image (manifest list):
+
+```bash
+# 1. Cross-compile binaries for both architectures
+CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -a -o bin/provider-arm64 cmd/provider/main.go
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -o bin/provider-amd64 cmd/provider/main.go
+
+# 2. Build arm64 image (--provenance=false avoids SWR-incompatible attestation)
+docker buildx build --platform linux/arm64 --provenance=false --load \
+  -t swr.cn-north-4.myhuaweicloud.com/weimantian/provider-huawei-elb:latest-arm64 \
+  -f Dockerfile.multiarch .
+
+# 3. Build amd64 image
+docker buildx build --platform linux/amd64 --provenance=false --load \
+  -t swr.cn-north-4.myhuaweicloud.com/weimantian/provider-huawei-elb:latest-amd64 \
+  -f Dockerfile.multiarch .
+
+# 4. Log in to SWR
+docker login -u cn-north-4@<YOUR_ACCESS_KEY> -p <YOUR_LOGIN_TOKEN> swr.cn-north-4.myhuaweicloud.com
+
+# 5. Push both single-arch images
+docker push swr.cn-north-4.myhuaweicloud.com/weimantian/provider-huawei-elb:latest-arm64
+docker push swr.cn-north-4.myhuaweicloud.com/weimantian/provider-huawei-elb:latest-amd64
+
+# 6. Combine into multi-arch manifest list and push
+docker manifest create \
+  swr.cn-north-4.myhuaweicloud.com/weimantian/provider-huawei-elb:latest \
+  swr.cn-north-4.myhuaweicloud.com/weimantian/provider-huawei-elb:latest-arm64 \
+  swr.cn-north-4.myhuaweicloud.com/weimantian/provider-huawei-elb:latest-amd64
+docker manifest push swr.cn-north-4.myhuaweicloud.com/weimantian/provider-huawei-elb:latest
+```
+
+> This uses `Dockerfile.multiarch`, which selects the correct binary via `TARGETARCH`.
+>
+> **Critical**: `--provenance=false` is required. Without it, BuildKit generates attestation metadata that SWR rejects with `Invalid image, fail to parse 'manifest.json'`.
+
+##### After Building: Choose Based on Cluster Type
+
+**Scenario A: Deploying to a remote CCE cluster** (CCE nodes cannot access your local Docker images, must push to SWR)
+
+If you used Method A/B (single-arch), push manually to SWR:
+
+```bash
+# 1. Log in to Huawei Cloud SWR (get login command from Console → SWR → Login Command)
+docker login -u cn-north-4@<YOUR_ACCESS_KEY> -p <YOUR_LOGIN_TOKEN> swr.cn-north-4.myhuaweicloud.com
+
+# 2. Tag the image (replace weimantian with your SWR organization/namespace)
+docker tag provider-huawei-elb:latest swr.cn-north-4.myhuaweicloud.com/weimantian/provider-huawei-elb:latest
+
+# 3. Push
+docker push swr.cn-north-4.myhuaweicloud.com/weimantian/provider-huawei-elb:latest
+```
+
+If you used Method C (multi-arch), the image was already pushed during the build process. Skip this step.
+
+Then use the SWR image address in `provider-values.yaml`:
+```yaml
+image:
+  repository: swr.cn-north-4.myhuaweicloud.com/weimantian/provider-huawei-elb
+  tag: latest
+  pullPolicy: IfNotPresent
+```
+
+**Scenario B: Local k3d/kind dev cluster** (K8s node is your local machine, use image directly, no push needed)
+
+```bash
+# k3d: import local image into cluster
+k3d image import provider-huawei-elb:latest
+
+# kind: import local image into cluster
+kind load docker-image provider-huawei-elb:latest
+```
+
+Then use the local image name in `provider-values.yaml` with pullPolicy Never:
+```yaml
+image:
+  repository: provider-huawei-elb
+  tag: latest
+  pullPolicy: Never          # for local dev only, never pull from registry
+```
 
 ### 4.2 Create Huawei Cloud Credentials Secret
 

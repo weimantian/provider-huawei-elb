@@ -1,0 +1,19 @@
+# Multi-arch build Dockerfile — uses pre-compiled binaries for both arm64 and amd64
+# Build both binaries first:
+#   CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -a -o bin/provider-arm64 cmd/provider/main.go
+#   CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -o bin/provider-amd64 cmd/provider/main.go
+# Then build each platform:
+#   docker buildx build --platform linux/arm64 --provenance=false --load -t <image>:latest-arm64 -f Dockerfile.multiarch .
+#   docker buildx build --platform linux/amd64 --provenance=false --load -t <image>:latest-amd64 -f Dockerfile.multiarch .
+# Combine into multi-arch manifest list:
+#   docker manifest create <image>:latest <image>:latest-arm64 <image>:latest-amd64
+#   docker manifest push <image>:latest
+
+FROM redis:7-alpine
+
+ARG TARGETARCH
+WORKDIR /
+COPY bin/provider-${TARGETARCH} /provider
+RUN addgroup -g 65532 -S nonroot && adduser -u 65532 -S -G nonroot nonroot
+USER 65532:65532
+ENTRYPOINT ["/provider"]

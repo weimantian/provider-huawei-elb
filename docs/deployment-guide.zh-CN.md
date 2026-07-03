@@ -140,16 +140,138 @@ kubectl port-forward svc/everest 8080:8080 -n everest-system
 
 ### 4.1 镜像准备
 
-镜像已构建并推送到华为云 SWR：
+部署 Provider 需要一个容器镜像。有两种方式获取，**任选其一**即可。
+
+#### 方式一：使用已构建好的多架构镜像（推荐，直接拉取）
+
+镜像已构建并推送到华为云 SWR，**同时支持 amd64（x86）和 arm64（鲲鹏）架构**，直接拉取即可：
 
 ```bash
-# 确认镜像可拉取
 docker pull swr.cn-north-4.myhuaweicloud.com/weimantian/provider-huawei-elb:latest
 ```
 
-> 如需自行构建，在**仓库根目录**执行：
-> - 有网络：`docker build -t provider-huawei-elb:latest .`（用 `Dockerfile`）
-> - 无网络：参考 `Dockerfile.local`，先交叉编译再打包
+拉取成功后跳到 [§4.2](#42-创建华为云凭证-secret) 继续部署。
+
+#### 方式二：本地构建镜像
+
+如果需要修改代码后重新构建，或无法访问 SWR，可以在**仓库根目录**自行构建。
+
+##### 方式 A：标准构建（需要网络，Docker 自动拉取 golang 基础镜像）
+
+```bash
+# 在仓库根目录执行，使用标准 Dockerfile
+docker build -t provider-huawei-elb:latest .
+```
+
+> 此方式使用 `Dockerfile`，Docker 会自动拉取 `golang:1.26` 编译 Go 源码，再用 `distroless` 打包运行时镜像。需要能访问 Docker Hub。
+>
+> **注意**：此方式只构建当前机器架构的单架构镜像。
+
+##### 方式 B：本地交叉编译构建（无需网络，使用本地基础镜像）
+
+如果机器无法访问 Docker Hub（拉不到 `golang:1.26`），先交叉编译二进制，再用本地已有的基础镜像打包：
+
+```bash
+# 1. 确认集群架构（arm64 或 amd64）
+kubectl get nodes -o jsonpath='{.items[0].status.nodeInfo.architecture}'
+
+# 2. 交叉编译 Go 二进制（根据集群架构选择 GOARCH）
+#    arm64 集群（如华为云鲲鹏 CCE）：
+CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -a -o bin/provider cmd/provider/main.go
+
+#    amd64 集群（如华为云 x86 CCE）：
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -o bin/provider cmd/provider/main.go
+
+# 3. 用 Dockerfile.local 打包（禁用 BuildKit 避免 SWR 不兼容的 manifest list）
+DOCKER_BUILDKIT=0 docker build -f Dockerfile.local -t provider-huawei-elb:latest .
+```
+
+> 此方式使用 `Dockerfile.local`，以本地 `redis:7-alpine` 镜像为基础（含 CA 证书，支持 HTTPS 调华为云 API）。二进制是静态编译的，无 CGO 依赖。
+>
+> **注意**：此方式只构建指定架构的单架构镜像。
+
+##### 方式 C：多架构构建（同时支持 amd64 + arm64）
+
+如果需要同时支持 x86 和鲲鹏集群，构建一个多架构镜像（manifest list）：
+
+```bash
+# 1. 交叉编译两种架构的二进制
+CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -a -o bin/provider-arm64 cmd/provider/main.go
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -o bin/provider-amd64 cmd/provider/main.go
+
+# 2. 构建 arm64 镜像（--provenance=false 避免 SWR 不兼容 attestation）
+docker buildx build --platform linux/arm64 --provenance=false --load \
+  -t swr.cn-north-4.myhuaweicloud.com/weimantian/provider-huawei-elb:latest-arm64 \
+  -f Dockerfile.multiarch .
+
+# 3. 构建 amd64 镜像
+docker buildx build --platform linux/amd64 --provenance=false --load \
+  -t swr.cn-north-4.myhuaweicloud.com/weimantian/provider-huawei-elb:latest-amd64 \
+  -f Dockerfile.multiarch .
+
+# 4. 登录 SWR
+docker login -u cn-north-4@<YOUR_ACCESS_KEY> -p <YOUR_LOGIN_TOKEN> swr.cn-north-4.myhuaweicloud.com
+
+# 5. 推送两个单架构镜像
+docker push swr.cn-north-4.myhuaweicloud.com/weimantian/provider-huawei-elb:latest-arm64
+docker push swr.cn-north-4.myhuaweicloud.com/weimantian/provider-huawei-elb:latest-amd64
+
+# 6. 合并为多架构 manifest list 并推送
+docker manifest create \
+  swr.cn-north-4.myhuaweicloud.com/weimantian/provider-huawei-elb:latest \
+  swr.cn-north-4.myhuaweicloud.com/weimantian/provider-huawei-elb:latest-arm64 \
+  swr.cn-north-4.myhuaweicloud.com/weimantian/provider-huawei-elb:latest-amd64
+docker manifest push swr.cn-north-4.myhuaweicloud.com/weimantian/provider-huawei-elb:latest
+```
+
+> 此方式使用 `Dockerfile.multiarch`，通过 `TARGETARCH` 自动选择对应架构的二进制。
+>
+> **关键**：`--provenance=false` 是必须的，否则 BuildKit 生成的 attestation 元数据会被 SWR 拒绝（报错 `Invalid image, fail to parse 'manifest.json'`）。
+
+##### 构建完成后：根据集群类型选择
+
+**场景 A：部署到远程 CCE 集群**（CCE 节点无法访问你本地的 Docker 镜像，必须推送到 SWR）
+
+如果使用方式 A/B（单架构），需手动推送到 SWR：
+
+```bash
+# 1. 登录华为云 SWR（在华为云控制台 → 容器镜像服务 SWR → 登录指令中获取）
+docker login -u cn-north-4@<YOUR_ACCESS_KEY> -p <YOUR_LOGIN_TOKEN> swr.cn-north-4.myhuaweicloud.com
+
+# 2. 打标签（替换 weimantian 为你的 SWR 组织/命名空间）
+docker tag provider-huawei-elb:latest swr.cn-north-4.myhuaweicloud.com/weimantian/provider-huawei-elb:latest
+
+# 3. 推送
+docker push swr.cn-north-4.myhuaweicloud.com/weimantian/provider-huawei-elb:latest
+```
+
+如果使用方式 C（多架构），镜像已在构建过程中推送，跳过此步。
+
+然后在 `provider-values.yaml` 中使用 SWR 镜像地址：
+```yaml
+image:
+  repository: swr.cn-north-4.myhuaweicloud.com/weimantian/provider-huawei-elb
+  tag: latest
+  pullPolicy: IfNotPresent
+```
+
+**场景 B：本地 k3d/kind 开发集群**（K8s 节点就是本机，直接用本地镜像，无需推送）
+
+```bash
+# k3d：将本地镜像导入集群
+k3d image import provider-huawei-elb:latest
+
+# kind：将本地镜像导入集群
+kind load docker-image provider-huawei-elb:latest
+```
+
+然后在 `provider-values.yaml` 中使用本地镜像名，并设为永不拉取：
+```yaml
+image:
+  repository: provider-huawei-elb
+  tag: latest
+  pullPolicy: Never          # 本地开发用，不从仓库拉取
+```
 
 ### 4.2 创建华为云凭证 Secret
 

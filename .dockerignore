@@ -1,6 +1,8 @@
 # generated binaries
 bin/
 !bin/provider
+!bin/provider-arm64
+!bin/provider-amd64
 # Helm chart dependencies
 charts/
 # test artifacts
