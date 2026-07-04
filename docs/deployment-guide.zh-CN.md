@@ -10,6 +10,84 @@
 
 ## 一、前提条件
 
+### 1.1 部署位置概览
+
+整个部署涉及三个位置，明确你“在哪里操作什么”：
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  你的 Mac（本地机器）                                         │
+│  ────────────────────                                        │
+│  • 执行所有命令的地方（kubectl / helm / docker / git）       │
+│  • 不运行任何服务，只是“指挥台”                               │
+│  • 需要能上网（访问公网）和访问 CCE API Server                │
+└──────────┬──────────────────────────┬──────────────────────┘
+           │                          │
+           │ 1. docker push           │ 2. helm install / kubectl apply
+           │   推送镜像               │   部署 + 创建资源
+           ▼                          ▼
+┌──────────────────────┐   ┌──────────────────────────────────┐
+│  华为云 SWR           │   │  华为云 CCE 集群                  │
+│  ────────────         │   │  ──────────────                   │
+│  • 存放容器镜像        │   │  • 运行 OpenEverest 平台          │
+│  • 被 CCE 节点拉取     │   │  • 运行 Provider 容器（7×24）     │
+│                       │   │  • Provider 调华为云 ELB API      │
+│                       │   │    创建/删除 ELB 实例              │
+└──────────────────────┘   └──────────────────────────────────┘
+```
+
+**关键**：你的 Mac 只负责“下达命令”，真正运行服务的是 CCE 集群。Mac 关机后 Provider 依然在 CCE 里运行。
+
+### 1.2 工具与文件下载
+
+需要在 Mac 上安装以下工具，并从 CCE 控制台下载一个集群凭证文件：
+
+| 工具/文件 | 用途 | 下载方式 |
+|---|---|---|
+| **kubectl** | 操作 K8s 集群的命令行工具 | `brew install kubectl` 或 [官方指南](https://kubernetes.io/zh-cn/docs/tasks/tools/) |
+| **helm** | 部署 Helm Chart（OpenEverest + Provider） | `brew install helm` 或 [官方指南](https://helm.sh/zh/docs/intro/install/) |
+| **docker** | 构建容器镜像 | 安装 [Docker Desktop](https://www.docker.com/products/docker-desktop/) |
+| **git** | 克隆插件仓库 | 系统自带或 `brew install git` |
+| **kubeconfig** | CCE 集群连接凭证（含 API Server 地址 + 客户端证书/私钥） | 华为云 CCE 控制台下载，见 §1.3 |
+
+> Mac 用户推荐先装 [Homebrew](https://brew.sh/)，再用 `brew install kubectl helm git` 一次性装好前三个。
+
+### 1.3 下载文件存放位置
+
+| 文件 | 存放位置 | 说明 |
+|---|---|---|
+| kubectl / helm / docker / git | 系统 PATH（`/opt/homebrew/bin/` 或 `/usr/local/bin/`） | brew 安装后自动放好，终端可直接调用 |
+| **kubeconfig** | `~/.kube/config` | kubectl 默认读取此路径，放别处需设 `KUBECONFIG` 环境变量 |
+| 插件仓库代码 | 任意目录，如 `~/projects/provider-huawei-elb` | `git clone` 后即可（§二） |
+| `provider-values.yaml` | 仓库根目录（与 Makefile 同级） | §4.4 会创建，不用提前准备 |
+
+**下载 kubeconfig 的具体步骤**：
+
+1. 登录 [华为云控制台](https://console.huaweicloud.com/) → **云容器引擎 CCE** → 你的集群
+2. 点击集群名称进入详情页
+3. 右上角 **连接信息** → **kubectl** 页签
+4. 点击 **下载** 获取 kubeconfig 文件（通常下载到 `~/Downloads/`）
+
+**放置 kubeconfig 到 kubectl 默认读取位置**：
+
+```bash
+# 1. 创建 .kube 目录（如果没有）
+mkdir -p ~/.kube
+
+# 2. 把下载的 kubeconfig 文件移动过去并重命名为 config
+mv ~/Downloads/kubeconfig.json ~/.kube/config
+
+# 3. 设置权限（保护里面的私钥，不设会被 kubectl 拒绝读取）
+chmod 600 ~/.kube/config
+
+# 4. 验证连通性 —— 能返回节点列表说明凭证生效
+kubectl get nodes
+```
+
+> kubeconfig 里包含 CCE API Server 的公网地址和你的客户端证书/私钥，相当于“集群钥匙”。务必保管好，**不要提交到 Git 或分享给他人**。
+
+### 1.4 软件与账号要求
+
 | 项目 | 要求 |
 |---|---|
 | Kubernetes 集群 | 1.24+（华为云 CCE 或其他标准 K8s） |

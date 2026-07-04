@@ -10,6 +10,84 @@ This beginner-friendly guide covers deploying OpenEverest from scratch on Linux 
 
 ## 1. Prerequisites
 
+### 1.1 Deployment Locations Overview
+
+The deployment involves three locations. Know "where you do what":
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Your Mac (local machine)                                    │
+│  ────────────────────                                        │
+│  • Where all commands run (kubectl / helm / docker / git)    │
+│  • Runs no services — it's just the "control panel"          │
+│  • Needs internet access (public) and reach to CCE API Server│
+└──────────┬──────────────────────────┬──────────────────────┘
+           │                          │
+           │ 1. docker push           │ 2. helm install / kubectl apply
+           │   push image             │   deploy + create resources
+           ▼                          ▼
+┌──────────────────────┐   ┌──────────────────────────────────┐
+│  Huawei Cloud SWR    │   │  Huawei Cloud CCE cluster         │
+│  ────────────        │   │  ──────────────                   │
+│  • Stores container  │   │  • Runs OpenEverest platform      │
+│    images            │   │  • Runs Provider container (24/7) │
+│  • Pulled by CCE     │   │  • Provider calls Huawei Cloud    │
+│    nodes             │   │    ELB API to create/delete ELBs  │
+└──────────────────────┘   └──────────────────────────────────┘
+```
+
+**Key takeaway**: Your Mac only issues commands; the CCE cluster is where services actually run. After deployment, the Provider keeps running in CCE even when your Mac is powered off.
+
+### 1.2 Tools & Files to Download
+
+Install the following tools on your Mac, and download one cluster credential file from the CCE console:
+
+| Tool / File | Purpose | How to get it |
+|---|---|---|
+| **kubectl** | Command-line tool to operate the K8s cluster | `brew install kubectl` or [official guide](https://kubernetes.io/docs/tasks/tools/) |
+| **helm** | Deploy Helm Charts (OpenEverest + Provider) | `brew install helm` or [official guide](https://helm.sh/docs/intro/install/) |
+| **docker** | Build container images | Install [Docker Desktop](https://www.docker.com/products/docker-desktop/) |
+| **git** | Clone the plugin repository | Pre-installed or `brew install git` |
+| **kubeconfig** | CCE cluster credential (contains API Server address + client cert/key) | Download from CCE console, see §1.3 |
+
+> macOS users should install [Homebrew](https://brew.sh/) first, then run `brew install kubectl helm git` for the first three.
+
+### 1.3 Where to Store Downloaded Files
+
+| File | Location | Notes |
+|---|---|---|
+| kubectl / helm / docker / git | System PATH (`/opt/homebrew/bin/` or `/usr/local/bin/`) | Installed by brew automatically; callable from terminal |
+| **kubeconfig** | `~/.kube/config` | Default path kubectl reads; elsewhere requires `KUBECONFIG` env var |
+| Plugin repository code | Any directory, e.g. `~/projects/provider-huawei-elb` | After `git clone` (§2) |
+| `provider-values.yaml` | Repository root (alongside Makefile) | Created in §4.4; no need to prepare in advance |
+
+**Steps to download kubeconfig**:
+
+1. Log in to [Huawei Cloud Console](https://console.huaweicloud.com/) → **Cloud Container Engine CCE** → your cluster
+2. Click the cluster name to open its detail page
+3. Top-right **Connection Information** → **kubectl** tab
+4. Click **Download** to get the kubeconfig file (usually saved to `~/Downloads/`)
+
+**Place kubeconfig where kubectl expects it**:
+
+```bash
+# 1. Create the .kube directory if it doesn't exist
+mkdir -p ~/.kube
+
+# 2. Move the downloaded kubeconfig and rename it to config
+mv ~/Downloads/kubeconfig.json ~/.kube/config
+
+# 3. Set permissions (protects the private key; kubectl refuses to read without this)
+chmod 600 ~/.kube/config
+
+# 4. Verify connectivity — returning a node list means the credential works
+kubectl get nodes
+```
+
+> The kubeconfig contains the CCE API Server's public address and your client certificate/private key — it's your "cluster key". Keep it safe and **never commit it to Git or share it with anyone**.
+
+### 1.4 Software & Account Requirements
+
 | Item | Requirement |
 |---|---|
 | Kubernetes cluster | 1.24+ (Huawei Cloud CCE or any standard K8s) |
